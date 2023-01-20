@@ -30,6 +30,7 @@ import (
 	"github.com/apigee/apigeecli/bundlegen"
 	genapi "github.com/apigee/apigeecli/bundlegen"
 	apiproxy "github.com/apigee/apigeecli/bundlegen/apiproxydef"
+	"github.com/apigee/apigeecli/bundlegen/config"
 	policies "github.com/apigee/apigeecli/bundlegen/policies"
 	proxies "github.com/apigee/apigeecli/bundlegen/proxies"
 	"github.com/apigee/apigeecli/bundlegen/targets"
@@ -41,9 +42,9 @@ import (
 
 var rootDir = "apiproxy"
 
-func GenerateAPIProxyBundleFromOAS(name string,
+func GenerateAPIProxyBundleFromOAS(
+	name string,
 	content string,
-	fileName string,
 	skipPolicy bool,
 	addCORS bool,
 	oasGoogleAcessTokenScopeLiteral string,
@@ -53,7 +54,8 @@ func GenerateAPIProxyBundleFromOAS(name string,
 	targetUrl string) (err error) {
 
 	var apiProxyData, proxyEndpointData, targetEndpointData string
-	const resourceType = "oas"
+	const oasResourceType = "oas"
+	const jscResourceType = "jsc"
 
 	tmpDir, err := os.MkdirTemp("", "proxy")
 	if err != nil {
@@ -79,7 +81,8 @@ func GenerateAPIProxyBundleFromOAS(name string,
 	proxiesDirPath := rootDir + string(os.PathSeparator) + "proxies"
 	policiesDirPath := rootDir + string(os.PathSeparator) + "policies"
 	targetDirPath := rootDir + string(os.PathSeparator) + "targets"
-	resDirPath := rootDir + string(os.PathSeparator) + "resources" + string(os.PathSeparator) + resourceType //"oas"
+	oasResDirPath := rootDir + string(os.PathSeparator) + "resources" + string(os.PathSeparator) + oasResourceType //"oas"
+	jscResDirPath := rootDir + string(os.PathSeparator) + "resources" + string(os.PathSeparator) + jscResourceType //"jsc"
 
 	if err = os.Mkdir(proxiesDirPath, os.ModePerm); err != nil {
 		return err
@@ -109,10 +112,24 @@ func GenerateAPIProxyBundleFromOAS(name string,
 	}
 
 	if !skipPolicy {
-		if err = os.MkdirAll(resDirPath, os.ModePerm); err != nil {
+		if err = os.MkdirAll(oasResDirPath, os.ModePerm); err != nil {
 			return err
 		}
-		if err = writeXMLData(resDirPath+string(os.PathSeparator)+fileName, content); err != nil {
+		if err = writeXMLData(oasResDirPath+string(os.PathSeparator)+config.OASFileName, content); err != nil {
+			return err
+		}
+
+		// add javascript resource
+		if err = os.MkdirAll(jscResDirPath, os.ModePerm); err != nil {
+			return err
+		}
+		if err = writeXMLData(jscResDirPath+string(os.PathSeparator)+config.JSResourceFileName,
+			policies.AddOasJSCPrivacyPreservedFileContent(
+				config.GetOASFaultNotation("cause"),
+				config.GetOASFaultNotation("name"),
+				config.OASResponseFaultStringVariable,
+				config.OASResponseErrorCodeVariable,
+			)); err != nil {
 			return err
 		}
 	}
@@ -164,11 +181,42 @@ func GenerateAPIProxyBundleFromOAS(name string,
 	}
 
 	if !skipPolicy {
-		//add oas policy
-		if err = writeXMLData(policiesDirPath+string(os.PathSeparator)+"OpenAPI-Spec-Validation-1.xml",
-			policies.AddOpenAPIValidatePolicy(fileName)); err != nil {
+		// add privacy preserved header
+		if err = writeXMLData(policiesDirPath+string(os.PathSeparator)+config.AssignPrivacyPreservedHeaderPolicy+".xml",
+			policies.AddHeaderWithAssignMessagePolicy(config.AssignPrivacyPreservedHeaderPolicy, "X-Nfer-Privacy-Preserved", "true")); err != nil {
 			return err
 		}
+
+		//add oas policy
+		if err = writeXMLData(policiesDirPath+string(os.PathSeparator)+config.OpenAPIRequestValidationPolicy+".xml",
+			policies.AddOpenAPIValidatePolicy(config.OASFileName, config.OpenAPIRequestValidationPolicy)); err != nil {
+			return err
+		}
+
+		//add oas response policy
+		if err = writeXMLData(policiesDirPath+string(os.PathSeparator)+config.OpenAPIResponseValidationPolicy+".xml",
+			policies.AddOpenAPIResponseValidatePolicy(config.OASFileName, config.OpenAPIResponseValidationPolicy)); err != nil {
+			return err
+		}
+
+		// add privacy preserved data policies
+		if err = writeXMLData(policiesDirPath+string(os.PathSeparator)+config.JSCErrorHandlePolicy+".xml",
+			policies.AddJavascriptPolicy(
+				config.JSResourceFileName,
+				config.JSCErrorHandlePolicy,
+			)); err != nil {
+			return err
+		}
+
+		if err = writeXMLData(policiesDirPath+string(os.PathSeparator)+config.OASOrPrivacyPreservedDataFaultPolicy+".xml",
+			policies.AddFaultPolicy(
+				config.OASOrPrivacyPreservedDataFaultPolicy,
+				config.OASResponseFaultStringVariable,
+				config.OASResponseErrorCodeVariable,
+			)); err != nil {
+			return err
+		}
+
 	}
 
 	if addCORS {

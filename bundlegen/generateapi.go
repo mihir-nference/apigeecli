@@ -17,6 +17,8 @@ package bundlegen
 import (
 	"encoding/json"
 	"fmt"
+	"io/ioutil"
+	"log"
 	"net/url"
 	"path"
 	"path/filepath"
@@ -24,6 +26,7 @@ import (
 	"strings"
 
 	apiproxy "github.com/apigee/apigeecli/bundlegen/apiproxydef"
+	"github.com/apigee/apigeecli/bundlegen/config"
 	"github.com/apigee/apigeecli/bundlegen/policies"
 	"github.com/apigee/apigeecli/bundlegen/proxies"
 	targets "github.com/apigee/apigeecli/bundlegen/targets"
@@ -97,6 +100,18 @@ type jwtPolicyDef struct {
 	Location         map[string]string //only one location supported for now
 }
 
+type deployConfig struct {
+	PrivacyPreservedFields []fieldData `json:"privacy_preserved_fields"`
+}
+
+type fieldData struct {
+	FieldName string `json:"field_name"`
+	Condition struct {
+		Operator string      `json:"operator"`
+		Value    interface{} `json:"value"`
+	} `json:"condition"`
+}
+
 var generateSetTarget bool
 
 var securitySchemesList = securitySchemesListDef{}
@@ -105,8 +120,9 @@ var quotaPolicyContent = map[string]string{}
 var spikeArrestPolicyContent = map[string]string{}
 
 var doc *openapi3.T
+var configContent deployConfig
 
-func LoadDocumentFromFile(filePath string, validate bool, formatValidation bool) (string, []byte, error) {
+func LoadDocumentFromFile(filePath string, deployConfigFilePath string, validate bool, formatValidation bool) (string, []byte, error) {
 	var err error
 	var jsonContent []byte
 
@@ -115,6 +131,8 @@ func LoadDocumentFromFile(filePath string, validate bool, formatValidation bool)
 		clilog.Error.Println(err)
 		return "", nil, err
 	}
+
+	loadDeployConfig(deployConfigFilePath)
 
 	//add custom string definitions
 	openapi3.DefineStringFormat("uuid", openapi3.FormatOfStringForUUIDOfRFC4122)
@@ -143,7 +161,7 @@ func LoadDocumentFromFile(filePath string, validate bool, formatValidation bool)
 	}
 }
 
-func LoadDocumentFromURI(uri string, validate bool, formatValidation bool) (string, []byte, error) {
+func LoadDocumentFromURI(uri string, deployConfigFilePath string, validate bool, formatValidation bool) (string, []byte, error) {
 	var err error
 	var jsonContent []byte
 
@@ -157,6 +175,8 @@ func LoadDocumentFromURI(uri string, validate bool, formatValidation bool) (stri
 	if err != nil {
 		return "", nil, err
 	}
+
+	loadDeployConfig(deployConfigFilePath)
 
 	//add custom string definitions
 	openapi3.DefineStringFormat("uuid", openapi3.FormatOfStringForUUIDOfRFC4122)
@@ -200,10 +220,20 @@ func GenerateAPIProxyDefFromOAS(name string,
 	oasGoogleIdTokenAudLiteral string,
 	oasGoogleIdTokenAudRef string,
 	oasTargetUrlRef string,
-	targetUrl string) (err error) {
+	targetUrl string) (err error, oasContent []byte) {
 
 	if doc == nil {
-		return fmt.Errorf("the Open API document not loaded")
+		return fmt.Errorf("the Open API document not loaded"), nil
+	}
+
+	addPrivacyPreservedRulesInOpenspec(doc)
+	oasContent, err = doc.MarshalJSON()
+	if err != nil {
+		return fmt.Errorf("error marshalling openspec after adding privacy rules: %s", err), nil
+	}
+	err = ioutil.WriteFile(config.OASFileName, oasContent, 0644)
+	if err != nil {
+		return fmt.Errorf("error making updated openapi file: %s", err), nil
 	}
 
 	//load security schemes
@@ -223,17 +253,18 @@ func GenerateAPIProxyDefFromOAS(name string,
 	apiproxy.AddProxyEndpoint("default")
 
 	if !skipPolicy {
-		apiproxy.AddResource(oasDocName, "oas")
+		apiproxy.AddResource(config.OASFileName, "oas")
+		apiproxy.AddResource(config.JSResourceFileName, "js")
 		apiproxy.AddPolicy("Validate-" + name + "-Schema")
 	}
 
 	u, err := getEndpoint(doc)
 	if err != nil {
-		return err
+		return err, nil
 	}
 
 	if u.Path == "" {
-		return fmt.Errorf("the OpenAPI url is missing a path. Don't use https://api.example.com, instead try https://api.example.com/basePath")
+		return fmt.Errorf("the OpenAPI url is missing a path. Don't use https://api.example.com, instead try https://api.example.com/basePath"), nil
 	}
 
 	apiproxy.SetBasePath(u.Path)
@@ -243,7 +274,7 @@ func GenerateAPIProxyDefFromOAS(name string,
 		targets.NewTargetEndpoint(NoAuthTargetName, u.Scheme+"://"+u.Hostname(), oasGoogleAcessTokenScopeLiteral, oasGoogleIdTokenAudLiteral, oasGoogleIdTokenAudRef)
 	} else { //an explicit target url is set
 		if _, err = url.Parse(targetUrl); err != nil {
-			return fmt.Errorf("invalid target url: %v", err)
+			return fmt.Errorf("invalid target url: %v", err), nil
 		}
 		targets.NewTargetEndpoint(NoAuthTargetName, targetUrl, oasGoogleAcessTokenScopeLiteral, oasGoogleIdTokenAudLiteral, oasGoogleIdTokenAudRef)
 	}
@@ -270,7 +301,7 @@ func GenerateAPIProxyDefFromOAS(name string,
 	if doc.Extensions != nil {
 		spikeArrestList, quotaList, err := processPreFlowExtensions(doc.Extensions)
 		if err != nil {
-			return err
+			return err, nil
 		}
 		if len(spikeArrestList) > 0 {
 			for _, spikeArrest := range spikeArrestList {
@@ -290,11 +321,27 @@ func GenerateAPIProxyDefFromOAS(name string,
 	}
 
 	if !skipPolicy {
-		proxies.AddStepToPreFlowRequest("OpenAPI-Spec-Validation-1")
+		proxies.AddStepToPreFlowRequest(
+			config.OpenAPIRequestValidationPolicy,
+		)
+		proxies.AddStepToPreFlowResponse(
+			config.OpenAPIResponseValidationPolicy,
+		)
+		proxies.AddStepToPreFlowRequest(
+			config.AssignPrivacyPreservedHeaderPolicy,
+		)
+		proxies.AddStepToPostFlowResponse(
+			config.JSCErrorHandlePolicy,
+			config.GetOASFailCondition(),
+		)
+		proxies.AddStepToPostFlowResponse(
+			config.OASOrPrivacyPreservedDataFaultPolicy,
+			config.GetOASFailCondition(),
+		)
 	}
 
 	if err = generateFlows(doc.Paths); err != nil {
-		return err
+		return err, nil
 	}
 
 	for _, securityScheme := range securitySchemesList.SecuritySchemes {
@@ -305,7 +352,7 @@ func GenerateAPIProxyDefFromOAS(name string,
 		}
 	}
 
-	return nil
+	return nil, oasContent
 }
 
 func getEndpoint(doc *openapi3.T) (u *url.URL, err error) {
@@ -758,4 +805,81 @@ func readScopes(scopes map[string]string) string {
 		scopeString = scopeName + " " + scopeString
 	}
 	return strings.TrimSpace(scopeString)
+}
+
+func loadDeployConfig(filePath string) {
+	content, err := ioutil.ReadFile(filePath)
+	if err != nil {
+		log.Fatalln("error reading config file:", err)
+	}
+
+	err = json.Unmarshal(content, &configContent)
+	if err != nil {
+		log.Fatalln("error decoding config file:", err)
+	}
+}
+
+func addFieldCondition(schema *openapi3.SchemaRef, field fieldData, doc *openapi3.T) {
+	if schema == nil {
+		return
+	}
+
+	// Check if the current schema has the field
+	if schema.Value != nil {
+		if schema.Value.Type == "array" {
+			addFieldCondition(schema.Value.Items, field, doc)
+		} else if schema.Value.Type == "object" {
+			if fieldSchema, ok := schema.Value.Properties[field.FieldName]; ok {
+				// Logic for exclusion criteria will look like this
+				// if _, skipField := fieldDef.Value.Extensions["skip"]
+
+				switch field.Condition.Operator {
+				case "<", "<=":
+					fieldSchema.Value.WithMin(field.Condition.Value.(float64))
+					fieldSchema.Value.WithExclusiveMin(field.Condition.Operator == "<")
+					fmt.Printf("Updated %s field's minimum value as %v\n", field.FieldName, field.Condition.Value)
+				case ">", ">=":
+					fieldSchema.Value.WithMax(field.Condition.Value.(float64))
+					fieldSchema.Value.WithExclusiveMax(field.Condition.Operator == ">")
+					fmt.Printf("Updated %s field's maximum value as %v\n", field.FieldName, field.Condition.Value)
+				default:
+					log.Fatalln("invalid operator found in config file, shout be either '<' or '>'")
+				}
+			} else {
+				// If the current schema has any nested schemas, check them as well
+				for _, nestedSchema := range schema.Value.Properties {
+					addFieldCondition(nestedSchema, field, doc)
+				}
+			}
+		} else if schema.Value.OneOf != nil {
+			for _, subSchema := range schema.Value.OneOf {
+				addFieldCondition(subSchema, field, doc)
+			}
+		} else if schema.Value.AllOf != nil {
+			for _, subSchema := range schema.Value.AllOf {
+				addFieldCondition(subSchema, field, doc)
+			}
+		} else if schema.Value.AnyOf != nil {
+			for _, subSchema := range schema.Value.AnyOf {
+				addFieldCondition(subSchema, field, doc)
+			}
+		}
+	}
+}
+
+func addPrivacyPreservedRulesInOpenspec(doc *openapi3.T) {
+	for _, field := range configContent.PrivacyPreservedFields {
+		// Iterate over the paths and check for the presence of field
+		for _, path := range doc.Paths {
+			for _, operation := range path.Operations() {
+				for _, response := range operation.Responses {
+					if response != nil && response.Value != nil {
+						for _, mediatype := range response.Value.Content {
+							addFieldCondition(mediatype.Schema, field, doc)
+						}
+					}
+				}
+			}
+		}
+	}
 }

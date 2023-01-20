@@ -120,7 +120,7 @@ func init() {
 	GqlCreateCmd.Flags().StringVarP(&apiKeyLocation, "apikey-location", "",
 		"", "Set the location of the API key, ex: request.header.x-api-key")
 	GqlCreateCmd.Flags().BoolVarP(&importProxy, "import", "",
-		true, "Import API Proxy after generation from spec")
+		false, "Import API Proxy after generation from spec")
 	GqlCreateCmd.Flags().BoolVarP(&skipPolicy, "skip-policy", "",
 		false, "Skip adding the GraphQL Validate policy")
 	GqlCreateCmd.Flags().BoolVarP(&addCORS, "add-cors", "",

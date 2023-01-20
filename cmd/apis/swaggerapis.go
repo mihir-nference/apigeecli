@@ -83,7 +83,7 @@ func init() {
 	SwaggerCreateCmd.Flags().StringVarP(&swaggerURI, "swaggeruri", "u",
 		"", "URI to a Swagger Specification file with API Gateway or Cloud Endpoints extensions")
 	SwaggerCreateCmd.Flags().BoolVarP(&importProxy, "import", "",
-		true, "Import API Proxy after generation from spec")
+		false, "Import API Proxy after generation from spec")
 	SwaggerCreateCmd.Flags().BoolVarP(&addCORS, "add-cors", "",
 		false, "Add a CORS policy")
 }

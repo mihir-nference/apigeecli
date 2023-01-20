@@ -41,7 +41,8 @@ type ResponseFlowDef struct {
 }
 
 type StepDef struct {
-	Name string `xml:"Name"`
+	Condition string `xml:"Condition,omitempty"`
+	Name      string `xml:"Name"`
 }
 
 type FlowsDef struct {

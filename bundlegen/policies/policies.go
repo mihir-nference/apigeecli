@@ -21,12 +21,36 @@ import (
 )
 
 var oasPolicyTemplate = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<OASValidation continueOnError="false" enabled="true" name="OpenAPI-Spec-Validation-1">
-    <DisplayName>OpenAPI Spec Validation-1</DisplayName>
+<OASValidation continueOnError="false" enabled="true" name="OAS_POLICY_NAME">
+    <DisplayName>OAS_POLICY_DISPLAY_NAME</DisplayName>
     <Properties/>
     <Source>request</Source>
-    <OASResource>oas://{PolicyName}</OASResource>
+    <OASResource>oas://{OpenAPIFileName}</OASResource>
 </OASValidation>`
+
+var oasResponsePolicyTemplate = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<OASValidation continueOnError="true" enabled="true" name="OAS_POLICY_NAME">
+    <DisplayName>OAS_POLICY_DISPLAY_NAME</DisplayName>
+    <Properties/>
+		<Options>
+    <ValidateMessageBody>true</ValidateMessageBody>
+  	</Options>
+    <Source>response</Source>
+    <OASResource>oas://{OpenAPIFilePath}</OASResource>
+</OASValidation>`
+
+var assignMessageHeaderPolicyTemplate = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<AssignMessage continueOnError="false" enabled="true" name="AM_POLICY_NAME">
+  <DisplayName>AM_DISPLAY_NAME</DisplayName>
+  <Properties/>
+  <Set>
+    <Headers>
+      <Header name="header-name">header-value</Header>
+    </Headers>
+  </Set>
+  <IgnoreUnresolvedVariables>true</IgnoreUnresolvedVariables>
+  <AssignTo createNew="false" transport="http" type="request"/>
+</AssignMessage>`
 
 var verifyApiKeyPolicy = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <VerifyAPIKey async="false" continueOnError="false" enabled="true" name="Verify-API-Key-1">
@@ -203,6 +227,49 @@ var rasiseFaultPolicy = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
     <IgnoreUnresolvedVariables>true</IgnoreUnresolvedVariables>
 </RaiseFault>`
 
+var raiseFaultPolicy = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<RaiseFault async="false" continueOnError="false" enabled="true" name="RAISE_FAULT_POLICY_NAME">
+    <DisplayName>RAISE_FAULT_POLICY_DISPLAY_NAME</DisplayName>
+    <FaultRules/>
+    <Properties/>
+    <FaultResponse>
+        <Set>
+            <Headers/>
+            <Payload contentType="application/json">
+						{
+							"fault": {
+								"faultstring": "{FAULT_STRING}",
+								"detail": {
+										"errorcode": "{ERROR_CODE}"
+								}
+						}
+            </Payload>
+            <StatusCode>403</StatusCode>
+            <ReasonPhrase>{FAULT_STRING}</ReasonPhrase>
+        </Set>
+    </FaultResponse>
+    <IgnoreUnresolvedVariables>true</IgnoreUnresolvedVariables>
+</RaiseFault>`
+
+var jsPolicyTemplate = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+	<Javascript continueOnError="false" enabled="true" timeLimit="200" name="JS_POLICY_NAME">
+		<DisplayName>JS_POLICY_DISPLAY_NAME</DisplayName>
+		<Properties/>
+		<ResourceURL>jsc://{JavascriptFileName}</ResourceURL>
+	</Javascript>
+`
+
+var jscPrivacyPreservedFileContent = `var faultCause = context.getVariable("FAULT_CAUSE_NOTATION") || "response oas validation failed"
+var errorCode = context.getVariable("FAULT_NAME_NOTATION") || "unkonwn"
+var faultString = JSON.stringify(faultCause).slice(1,-1)
+var errorCodeString = JSON.stringify(errorCode).slice(1,-1)
+if (faultString.includes("minimum")) {
+	faultString = "Privacy preserved data in response"
+}
+context.setVariable("FAULT_STRING", faultString)
+context.setVariable("ERROR_CODE", errorCodeString)
+`
+
 var extractJwtQueryPolicy = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <ExtractVariables async="false" continueOnError="false" enabled="true" name="Extract-JWT">
     <DisplayName>Extract-JWT</DisplayName>
@@ -231,8 +298,29 @@ func AddSetIntegrationRequestPolicy(integration string, apitrigger string) strin
 	return policyString
 }
 
-func AddOpenAPIValidatePolicy(name string) string {
-	return replaceTemplateWithPolicy(name)
+func AddJavascriptPolicy(fileName, policyName string) string {
+	policyString := replaceTemplateWithPolicy(fileName, jsPolicyTemplate)
+	policyString = strings.ReplaceAll(policyString, "JS_POLICY_NAME", policyName)
+	return strings.ReplaceAll(policyString, "JS_POLICY_DISPLAY_NAME", policyName)
+}
+
+func AddOpenAPIValidatePolicy(name, policyName string) string {
+	policyString := replaceTemplateWithPolicy(name, oasPolicyTemplate)
+	policyString = strings.ReplaceAll(policyString, "OAS_POLICY_NAME", policyName)
+	return strings.ReplaceAll(policyString, "OAS_POLICY_DISPLAY_NAME", policyName)
+}
+
+func AddOpenAPIResponseValidatePolicy(name, policyName string) string {
+	policyString := replaceTemplateWithPolicy(name, oasResponsePolicyTemplate)
+	policyString = strings.ReplaceAll(policyString, "OAS_POLICY_NAME", policyName)
+	return strings.ReplaceAll(policyString, "OAS_POLICY_DISPLAY_NAME", policyName)
+}
+
+func AddFaultPolicy(policyName, faultString, errorCode string) string {
+	policyString := strings.ReplaceAll(raiseFaultPolicy, "RAISE_FAULT_POLICY_NAME", policyName)
+	policyString = strings.ReplaceAll(policyString, "RAISE_FAULT_POLICY_DISPLAY_NAME", policyName)
+	policyString = strings.ReplaceAll(policyString, "FAULT_STRING", faultString)
+	return strings.ReplaceAll(policyString, "ERROR_CODE", errorCode)
 }
 
 func AddVerifyApiKeyPolicy(location string, policyName string, keyName string) string {
@@ -379,6 +467,27 @@ func AddRaiseFaultPolicy() string {
 	return rasiseFaultPolicy
 }
 
+func AddHeaderWithAssignMessagePolicy(policyName, headerName, headerValue string) string {
+	policyString := strings.ReplaceAll(assignMessageHeaderPolicyTemplate, "AM_POLICY_NAME", policyName)
+	policyString = strings.ReplaceAll(policyString, "AM_DISPLAY_NAME", policyName)
+	policyString = strings.ReplaceAll(policyString, "header-name", headerName)
+	policyString = strings.ReplaceAll(policyString, "header-value", headerValue)
+
+	return policyString
+}
+
+func AddOasJSCPrivacyPreservedFileContent(
+	oasFaultCauseVariableNotation string,
+	oasFaultNameVariableNotaion string,
+	oasFaultString string,
+	oasFaultErrorCode string,
+) string {
+	contentString := strings.ReplaceAll(jscPrivacyPreservedFileContent, "FAULT_CAUSE_NOTATION", oasFaultCauseVariableNotation)
+	contentString = strings.ReplaceAll(contentString, "FAULT_NAME_NOTATION", oasFaultNameVariableNotaion)
+	contentString = strings.ReplaceAll(contentString, "FAULT_STRING", oasFaultString)
+	return strings.ReplaceAll(contentString, "ERROR_CODE", oasFaultErrorCode)
+}
+
 func AddExtractJwtQueryPolicy(name string, queryName string) string {
 	policyString := strings.ReplaceAll(extractJwtQueryPolicy, "Extract-JWT", name)
 	policyString = strings.ReplaceAll(policyString, "jwt", queryName)
@@ -410,7 +519,8 @@ func IsCopyAuthEnabled() bool {
 	return copyAuth
 }
 
-func replaceTemplateWithPolicy(name string) string {
+// name replaces {(.*?)} in policy template
+func replaceTemplateWithPolicy(name, policyTemplate string) string {
 	re := regexp.MustCompile(`{(.*?)}`)
-	return re.ReplaceAllLiteralString(oasPolicyTemplate, name)
+	return re.ReplaceAllLiteralString(policyTemplate, name)
 }

@@ -36,23 +36,29 @@ var OasCreateCmd = &cobra.Command{
 		if targetUrl != "" && targetUrlRef != "" {
 			return fmt.Errorf("either target-url or target-url-ref must be passed, not both")
 		}
-		return apiclient.SetApigeeOrg(org)
+		if createOnline {
+			return apiclient.SetApigeeOrg(org)
+		} else if importProxy {
+			return fmt.Errorf("cannot import offline proxy")
+		}
+
+		return nil
 	},
 	RunE: func(cmd *cobra.Command, args []string) (err error) {
-		var content []byte
 		var oasDocName string
 
 		if oasFile != "" {
-			oasDocName, content, err = bundle.LoadDocumentFromFile(oasFile, validateSpec, formatValidation)
+			oasDocName, _, err = bundle.LoadDocumentFromFile(oasFile, deployConfigFile, validateSpec, formatValidation)
 		} else {
-			oasDocName, content, err = bundle.LoadDocumentFromURI(oasURI, validateSpec, formatValidation)
+			oasDocName, _, err = bundle.LoadDocumentFromURI(oasURI, deployConfigFile, validateSpec, formatValidation)
 		}
 		if err != nil {
 			return err
 		}
 
 		//Generate the apiproxy struct
-		err = bundle.GenerateAPIProxyDefFromOAS(name,
+		err, oasContent := bundle.GenerateAPIProxyDefFromOAS(
+			name,
 			oasDocName,
 			skipPolicy,
 			addCORS,
@@ -60,7 +66,8 @@ var OasCreateCmd = &cobra.Command{
 			oasGoogleIdTokenAudLiteral,
 			oasGoogleIdTokenAudRef,
 			targetUrlRef,
-			targetUrl)
+			targetUrl,
+		)
 
 		if err != nil {
 			return err
@@ -68,8 +75,7 @@ var OasCreateCmd = &cobra.Command{
 
 		//Create the API proxy bundle
 		err = proxybundle.GenerateAPIProxyBundleFromOAS(name,
-			string(content),
-			oasDocName,
+			string(oasContent),
 			skipPolicy,
 			addCORS,
 			oasGoogleAcessTokenScopeLiteral,
@@ -90,15 +96,17 @@ var OasCreateCmd = &cobra.Command{
 	},
 }
 
-var oasFile, oasURI, targetUrl string
+var oasFile, oasURI, targetUrl, deployConfigFile string
 var oasGoogleAcessTokenScopeLiteral, oasGoogleIdTokenAudLiteral, oasGoogleIdTokenAudRef string
-var validateSpec, formatValidation bool
+var validateSpec, formatValidation, createOnline bool
 
 func init() {
 	OasCreateCmd.Flags().StringVarP(&name, "name", "n",
 		"", "API Proxy name")
 	OasCreateCmd.Flags().StringVarP(&oasFile, "oasfile", "f",
 		"", "Open API 3.0 Specification file")
+	OasCreateCmd.Flags().StringVarP(&deployConfigFile, "configfile", "",
+		"config.json", "Deployment config file")
 	OasCreateCmd.Flags().StringVarP(&oasURI, "oasuri", "u",
 		"", "Open API 3.0 Specification URI location")
 	OasCreateCmd.Flags().StringVarP(&oasGoogleAcessTokenScopeLiteral, "google-accesstoken-scope-literal", "",
@@ -111,8 +119,10 @@ func init() {
 		"", "Set a reference variable containing the target endpoint")
 	OasCreateCmd.Flags().StringVarP(&targetUrl, "target-url", "",
 		"", "Set a target URL for the target endpoint")
+	OasCreateCmd.Flags().BoolVarP(&createOnline, "createOnline", "",
+		false, "Create API proxy revision online to the configured org and environment")
 	OasCreateCmd.Flags().BoolVarP(&importProxy, "import", "",
-		true, "Import API Proxy after generation from spec")
+		false, "Import API Proxy after generation from spec")
 	OasCreateCmd.Flags().BoolVarP(&validateSpec, "validate", "",
 		true, "Validate Spec before generating proxy")
 	OasCreateCmd.Flags().BoolVarP(&skipPolicy, "skip-policy", "",

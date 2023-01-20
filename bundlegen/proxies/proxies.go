@@ -106,6 +106,19 @@ func AddStepToPreFlowRequest(name string) {
 	proxyEndpoint.PreFlow.Request.Step = append(proxyEndpoint.PreFlow.Request.Step, &step)
 }
 
+func AddStepToPreFlowResponse(name string) {
+	step := proxytypes.StepDef{}
+	step.Name = name
+	proxyEndpoint.PreFlow.Response.Step = append(proxyEndpoint.PreFlow.Response.Step, &step)
+}
+
+func AddStepToPostFlowResponse(name, condition string) {
+	step := proxytypes.StepDef{}
+	step.Name = name
+	step.Condition = condition
+	proxyEndpoint.PostFlow.Response.Step = append(proxyEndpoint.PostFlow.Response.Step, &step)
+}
+
 func AddStepToFlowRequest(name string, flowName string) error {
 	for flowKey, flow := range proxyEndpoint.Flows.Flow {
 		if flow.Name == flowName {
@@ -116,6 +129,24 @@ func AddStepToFlowRequest(name string, flowName string) error {
 		}
 	}
 	return fmt.Errorf("flow name not found")
+}
+
+func AddOasOrPrivacyFaultStepsToPostFlowResponse(
+	jscPolicyName string,
+	oasOrPrivacyFaultPolicyName string,
+	condition string,
+) {
+	jscPolicyStep := proxytypes.StepDef{
+		Name:      jscPolicyName,
+		Condition: condition,
+	}
+	proxyEndpoint.PostFlow.Response.Step = append(proxyEndpoint.PostFlow.Response.Step, &jscPolicyStep)
+
+	raiseFaultStep := proxytypes.StepDef{
+		Name:      oasOrPrivacyFaultPolicyName,
+		Condition: condition,
+	}
+	proxyEndpoint.PostFlow.Response.Step = append(proxyEndpoint.PostFlow.Response.Step, &raiseFaultStep)
 }
 
 func AddRoute(name string, endpoint string, condition string) {

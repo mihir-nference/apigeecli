@@ -7,6 +7,8 @@
 *.zip
 apigeecli
 .DS_Store
+main
+.go-version
 
 # Test binary, built with `go test -c`
 *.test
